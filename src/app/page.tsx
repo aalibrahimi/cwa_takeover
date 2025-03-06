@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import Image from "next/image";
 // import { Button } from "@/components/ui/shadcnComponents/button";
 // import {
 //   Card,
@@ -119,9 +120,13 @@ export default function LandingPage() {
         <div className="max-w-7xl mx-auto flex justify-between items-center">
           {/* Logo Placeholder */}
           <div className="flex items-center">
-            <div className="h-10 w-10 bg-gradient-to-br from-red-600 to-red-900 rounded-lg flex items-center justify-center">
-              <span className="font-bold text-xl">T</span>
-            </div>
+          <Image 
+    src="/codewithali.png"
+    alt="Takeover logo"
+    width={32} 
+    height={32}
+    className="rounded-lg" 
+  />
             <span className="ml-2 text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-red-400 to-red-600">
               Takeover
             </span>
@@ -587,7 +592,13 @@ export default function LandingPage() {
                 <div className="relative">
                   {/* App icon placeholder */}
                   <div className="w-48 h-48 mx-auto bg-gradient-to-br from-red-700 to-red-900 rounded-3xl flex items-center justify-center shadow-2xl shadow-red-950/30 transform hover:rotate-3 hover:scale-105 transition-transform">
-                    <span className="font-bold text-6xl text-white">T</span>
+                  <Image 
+    src="/codewithali.png"
+    alt="Takeover logo"
+    width={200} 
+    height={100}
+    className="rounded-lg" 
+  />
                   </div>
                   
                   {/* Decorative elements */}
@@ -609,7 +620,13 @@ export default function LandingPage() {
             <div className="md:col-span-1">
               <div className="flex items-center mb-4">
                 <div className="h-8 w-8 bg-gradient-to-br from-red-600 to-red-900 rounded-lg flex items-center justify-center">
-                  <span className="font-bold text-sm">T</span>
+                <Image 
+                    src="/codewithali.png"
+                    alt="Code with Ali"
+                    width={200} 
+                    height={100}
+                    className="your-image-classes" 
+                  />
                 </div>
                 <span className="ml-2 text-lg font-bold bg-clip-text text-transparent bg-gradient-to-r from-red-400 to-red-600">
                   Takeover
