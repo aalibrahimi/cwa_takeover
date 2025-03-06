@@ -14,7 +14,7 @@ import {
   Bell,
   BarChart3,
   Settings,
-  Shield
+
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -118,8 +118,8 @@ export default function LandingPage() {
     return () => clearInterval(interval);
   }, []);
 
-  const isMobile = windowWidth < 768;
-  const isTablet = windowWidth >= 768 && windowWidth < 1024;
+  // const isMobile = windowWidth < 768;
+  // const isTablet = windowWidth >= 768 && windowWidth < 1024;
 
   return (
     <div className="min-h-screen bg-black text-white overflow-x-hidden">
