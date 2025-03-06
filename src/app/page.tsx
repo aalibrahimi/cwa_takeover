@@ -213,7 +213,7 @@ export default function LandingPage() {
                   <Button 
                     variant="outline" 
                     size="lg"
-                    className="border-red-800/30 text-red-400 hover:bg-red-950/20 hover:text-red-300 px-8"
+                    className="border-red-800/30 text-red-400 bg-red-950/20 hover:bg-red-950/20 hover:text-white px-8"
                   >
                     Learn More
                     <ChevronDown className="ml-2 h-5 w-5" />
@@ -351,7 +351,7 @@ export default function LandingPage() {
                         variant="ghost"
                         className="p-0 text-red-400 hover:text-red-300 hover:bg-transparent group"
                       >
-                        Learn more
+                        Learn moress
                         <ArrowRight className="ml-2 h-4 w-4 transform group-hover:translate-x-1 transition-transform" />
                       </Button>
                     </div>
