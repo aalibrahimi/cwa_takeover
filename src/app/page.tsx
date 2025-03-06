@@ -24,7 +24,15 @@ import Image from "next/image";
 //   Card,
 //   CardContent
 // } from "@/components/ui/shadcnComponents/card";
-
+interface NavLinkProps {
+  href: string;
+  children: React.ReactNode;
+}
+interface MobileNavLinkProps {
+  href: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}
 // Feature data
 const features = [
   {
@@ -713,25 +721,25 @@ export default function LandingPage() {
 }
 
 // Utility components
-function NavLink({ href, children }) {
+function NavLink({ href, children }: NavLinkProps) {
   return (
     <a
-      href={href}
-      className="text-red-200/80 hover:text-red-300 transition-colors"
-    >
-      {children}
-    </a>
-  );
+    href={href}
+    className="text-red-200/80 hover:text-red-300 transition-colors"
+  >
+    {children}
+  </a>
+);
 }
 
-function MobileNavLink({ href, onClick, children }) {
+function MobileNavLink({ href, onClick, children }: MobileNavLinkProps) {
   return (
     <a
-      href={href}
-      onClick={onClick}
-      className="flex items-center py-2 px-3 text-red-200/80 hover:text-red-300 transition-colors"
+    href={href}
+    onClick={onClick}
+    className="flex items-center py-2 px-3 text-red-200/80 hover:text-red-300 transition-colors"
     >
-      {children}
+       {children}
       <ArrowRight className="ml-auto h-4 w-4" />
     </a>
   );
