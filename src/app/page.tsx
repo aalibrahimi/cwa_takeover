@@ -568,14 +568,14 @@ export default function LandingPage() {
                     <Button 
                       size="lg"
                       variant="outline"
-                      className="flex-1 border-red-800/30 text-red-400 hover:bg-red-950/20 hover:text-red-300"
+                      className="flex-1 border-red-800/30 text-red-400 bg-red-950/20 hover:bg-red-950/20 hover:text-white"
                     >
                       iOS App
                     </Button>
                     <Button 
                       size="lg"
                       variant="outline"
-                      className="flex-1 border-red-800/30 text-red-400 hover:bg-red-950/20 hover:text-red-300"
+                      className="flex-1 border-red-800/30 text-red-400 bg-red-950/20 hover:bg-red-950/20 hover:text-white"
                     >
                       Android App
                     </Button>
