@@ -18,6 +18,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import Image from "next/image";
+import Link from "next/link";
 // import { Button } from "@/components/ui/shadcnComponents/button";
 // import {
 //   Card,
@@ -242,7 +243,9 @@ export default function LandingPage() {
                       text-white border border-red-800/30 shadow-lg shadow-red-950/20 px-8"
                   >
                     <Download className="mr-2 h-5 w-5" />
-                    Download Now
+                    <Link href="https://github.com/CodeWithAli-Co/CWA-TakeOver/releases/download/v1.0.0/CWA.TakeOver_1.0.0_x64_en-US.msi">
+                      Download Now
+                    </Link>
                   </Button>
                   <Button
                     variant="outline"
@@ -559,7 +562,7 @@ export default function LandingPage() {
                     </svg>
                   </div>
                   <p className="text-lg md:text-xl text-center mb-8">
-                  &quot;{testimonials[activeTestimonial].content}&quot;
+                    &quot;{testimonials[activeTestimonial].content}&quot;
                   </p>
                   <div className="text-center">
                     <div className="font-bold text-white">
@@ -641,7 +644,9 @@ export default function LandingPage() {
                       text-white border border-red-800/30 shadow-lg shadow-red-950/20"
                   >
                     <Download className="mr-2 h-5 w-5" />
-                    Download for Windows
+                    <Link href="https://github.com/CodeWithAli-Co/CWA-TakeOver/releases/download/v1.0.0/CWA.TakeOver_1.0.0_x64_en-US.msi">
+                      Download for Windows
+                    </Link>
                   </Button>
                   <Button
                     size="lg"
