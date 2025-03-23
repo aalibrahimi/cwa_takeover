@@ -243,7 +243,7 @@ export default function LandingPage() {
                       text-white border border-red-800/30 shadow-lg shadow-red-950/20 px-8"
                   >
                     <Download className="mr-2 h-5 w-5" />
-                    <Link href="https://github.com/CodeWithAli-Co/CWA-TakeOver/releases/download/v1.0.0/CWA.TakeOver_1.0.0_x64_en-US.msi">
+                    <Link href="https://github.com/CodeWithAli-Co/CWA-TakeOver/releases/latest" target="_blank">
                       Download Now
                     </Link>
                   </Button>
@@ -644,11 +644,11 @@ export default function LandingPage() {
                       text-white border border-red-800/30 shadow-lg shadow-red-950/20"
                   >
                     <Download className="mr-2 h-5 w-5" />
-                    <Link href="https://github.com/CodeWithAli-Co/CWA-TakeOver/releases/download/v1.0.0/CWA.TakeOver_1.0.0_x64_en-US.msi">
+                    <Link href="https://github.com/CodeWithAli-Co/CWA-TakeOver/releases/latest" target="_blank">
                       Download for Windows
                     </Link>
                   </Button>
-                  <Button
+                  {/* <Button
                     size="lg"
                     className="w-full bg-gradient-to-r from-red-800 to-red-950 hover:from-red-700 hover:to-red-900 
                       text-white border border-red-800/30 shadow-lg shadow-red-950/20"
@@ -671,7 +671,7 @@ export default function LandingPage() {
                     >
                       Android App
                     </Button>
-                  </div>
+                  </div> */}
                 </div>
               </div>
 
@@ -725,7 +725,7 @@ export default function LandingPage() {
               </p>
               <div className="flex space-x-4">
                 {/* Social icons placeholders */}
-                {[1, 2, 3, 4].map((i) => (
+                {/* {[1, 2, 3, 4].map((i) => (
                   <a
                     key={i}
                     href="#"
@@ -733,7 +733,7 @@ export default function LandingPage() {
                   >
                     <span className="text-xs text-red-400">{i}</span>
                   </a>
-                ))}
+                ))} */}
               </div>
             </div>
 
