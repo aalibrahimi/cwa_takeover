@@ -113,13 +113,15 @@ const app = new Hono().basePath("/api/email");
 
 app.use("/*", logger());
 
+// CORS — wide open. Auth is HMAC-signature in headers, NOT cookies,
+// so CORS doesn't gate access. Allowing "*" lets the Tauri webview
+// (which has origin http://localhost:1420 in dev, tauri://localhost
+// in production) hit the endpoint without origin gymnastics. The
+// signature requirement is the actual security boundary.
 app.use(
   "/*",
   cors({
-    origin:
-      process.env.NODE_ENV === "development"
-        ? DEV_CORS_ORIGINS
-        : PROD_CORS_ORIGINS,
+    origin: "*",
     allowHeaders: ["Content-Type", "Authorization", "timestamp"],
     allowMethods: ["POST", "OPTIONS"],
     maxAge: 600,
