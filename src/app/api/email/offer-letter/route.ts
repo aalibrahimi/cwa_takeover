@@ -83,7 +83,7 @@ app.post(
       await redis.connect();
     }
 
-    const cachedToken = await redis.json.get(`bearer:${timestamp}`);
+    const cachedToken = await redis.get(`bearer:${timestamp}`);
     if (cachedToken === null) {
       throw new HTTPException(400, {
         message: "No valid token found",
