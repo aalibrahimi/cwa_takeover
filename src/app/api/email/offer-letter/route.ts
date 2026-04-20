@@ -2,47 +2,47 @@
  * POST /api/email/offer-letter
  *
  * Receives an OfferLetterParams payload from Takeover (desktop) and
- * forwards it to Resend. The email body is rendered server-side via
- * the React Email component at `emails/offer-letter.tsx` — Resend's
- * `react:` field does the CSS inlining dance.
+ * forwards it to Resend. Email body is rendered server-side via the
+ * React Email component at `emails/offer-letter.tsx`.
  *
- * Auth: Redis bearer + timestamp pattern.
- *   · Client (Takeover) generates a random token + ISO-8601 ts,
- *     writes `bearer:<ts>` = <token> to Upstash with 24h TTL, sends
- *     both in headers.
- *   · This route looks up the key, constant-time compares, deletes
- *     on match (single-use), then sends.
+ * Auth: HMAC-SHA256 over (timestamp + body_hash). No storage.
  *
- * Key design changes vs the initial backender draft:
- *   1. `@upstash/redis` (REST-based, serverless-native) replaces
- *      `redis` (node-redis, TCP-based). TCP connections from
- *      Vercel serverless cold-start in weird ways; REST is
- *      stateless and purpose-built for this shape.
- *   2. `attachment.contentBase64` replaces `attachment.textContent`.
- *      The server now decodes base64 → Buffer exactly once instead
- *      of re-encoding UTF-8 text to base64 (which would corrupt any
- *      non-ASCII byte — fatal for PDFs).
- *   3. Interface extended with candidateName, positionTitle,
- *      employerLegalName, brand, acceptUrl so the React Email
- *      template can render real content instead of a stub button.
+ *   1. Client + server share `EMAIL_HMAC_SECRET` (env var only,
+ *      never shipped in JS bundles other than the Tauri build).
+ *   2. Client computes:
+ *        bodyHash = sha256_hex(rawJsonBodyString)
+ *        sig      = hmac_sha256_hex(secret, timestamp + ":" + bodyHash)
+ *   3. Client sends:
+ *        Authorization: Bearer <sig>
+ *        timestamp:     <ISO-8601 UTC>
+ *   4. Server reads the raw body bytes, recomputes sig, constant-
+ *      time compares. Rejects if (a) timestamp is outside the
+ *      ±5 minute window, (b) sig doesn't match, or (c) body was
+ *      tampered between sign and send.
+ *
+ * Why HMAC instead of Redis bearer:
+ *   - No storage round-trip → faster.
+ *   - Browser-compatible (Web Crypto API works in Tauri + Node).
+ *   - Single shared secret on Vercel + in Takeover's bundle, no
+ *     Upstash/Railway dep.
+ *   - Replay protection from the timestamp window.
+ *   - Tampering protection from including bodyHash in the sig.
  *
  * Env required:
- *   UPSTASH_REDIS_REST_URL
- *   UPSTASH_REDIS_REST_TOKEN
- *   RESEND_API_KEY
+ *   EMAIL_HMAC_SECRET    — long random string (use `openssl rand -hex 32`)
+ *   RESEND_API_KEY       — Resend API key
  *
  * Optional:
- *   EMAIL_TOKEN_MAX_AGE_SECONDS  (default 86400 = 24h)
+ *   EMAIL_TIMESTAMP_WINDOW_SECONDS  (default 300 = 5 minutes)
  */
 
 import { Hono } from "hono";
 import { handle } from "hono/vercel";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
-import { validator } from "hono/validator";
 import { HTTPException } from "hono/http-exception";
 import { Resend } from "resend";
-import { Redis } from "@upstash/redis";
+import { createHmac, createHash } from "node:crypto";
 import OfferLetter, { type Brand } from "../../../../../emails/offer-letter";
 import { DEV_CORS_ORIGINS, PROD_CORS_ORIGINS } from "../corsConfig";
 
@@ -50,19 +50,16 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // ── Interface the CLIENT sends ─────────────────────────────────────
-// Mirror of the `OfferLetterParams` type exported to Takeover.
 interface OfferLetterParams {
   from: { name: string; email: string };
-  to: string;                    // comma-separated = multiple recipients
+  to: string;
   subject: string;
-  body: string;                  // prose body for the React Email template
-  /** Required — the React Email template needs these to render. */
+  body: string;
   candidateName: string;
   positionTitle: string;
   employerLegalName: string;
   brand: Brand;
   acceptUrl: string;
-  /** Attachment — base64-encoded, any binary type. */
   attachment?: {
     filename: string;
     contentBase64: string;
@@ -70,16 +67,20 @@ interface OfferLetterParams {
   };
 }
 
-// ── Lazy singletons ────────────────────────────────────────────────
-function getRedis(): Redis {
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!url || !token) {
+// ── Config ─────────────────────────────────────────────────────────
+const TIMESTAMP_WINDOW_SECONDS = Number(
+  process.env.EMAIL_TIMESTAMP_WINDOW_SECONDS ?? 300,
+);
+
+function getHmacSecret(): string {
+  const secret = process.env.EMAIL_HMAC_SECRET;
+  if (!secret || secret.length < 32) {
     throw new Error(
-      "UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN required in env.",
+      "EMAIL_HMAC_SECRET is missing or too short (need >= 32 chars). " +
+      "Generate one with `openssl rand -hex 32`.",
     );
   }
-  return new Redis({ url, token });
+  return secret;
 }
 
 function getResend(): Resend {
@@ -88,12 +89,19 @@ function getResend(): Resend {
   return new Resend(key);
 }
 
-const MAX_TOKEN_AGE_SECONDS = Number(
-  process.env.EMAIL_TOKEN_MAX_AGE_SECONDS ?? 24 * 60 * 60,
-);
+// ── Crypto helpers ─────────────────────────────────────────────────
+function hmacHex(secret: string, message: string): string {
+  return createHmac("sha256", secret).update(message).digest("hex");
+}
 
-// Constant-time compare — prevents timing attacks on bearer validation.
-function safeEqual(a: string, b: string): boolean {
+function sha256Hex(s: string): string {
+  return createHash("sha256").update(s).digest("hex");
+}
+
+/** Constant-time hex string compare. Both must be same length;
+ *  Buffer.from(hex, 'hex') gives a length-N buffer where the hex
+ *  string is 2N chars, so we equality-check lengths first. */
+function safeEqualHex(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
   let diff = 0;
   for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
@@ -105,9 +113,6 @@ const app = new Hono().basePath("/api/email");
 
 app.use("/*", logger());
 
-// CORS — the Tauri webview has origin `tauri://localhost` or
-// `https://tauri.localhost` depending on platform; both are in
-// DEV_CORS_ORIGINS. PROD_CORS_ORIGINS includes the deployed site.
 app.use(
   "/*",
   cors({
@@ -121,154 +126,151 @@ app.use(
   }),
 );
 
-app.post(
-  "/offer-letter",
-  // Header validator — fails fast before body parsing.
-  validator("header", async (value) => {
-    const authHeader = (value["authorization"] as string) ?? "";
-    const m = /^Bearer\s+([A-Za-z0-9+/=_-]+)$/.exec(authHeader.trim());
-    if (!m) {
-      throw new HTTPException(401, {
-        message: "Missing or malformed Authorization header.",
-      });
+app.post("/offer-letter", async (c) => {
+  // ── 1. Extract auth headers ────────────────────────────────────
+  const authHeader = c.req.header("authorization") ?? "";
+  const m = /^Bearer\s+([a-f0-9]{64})$/i.exec(authHeader.trim());
+  if (!m) {
+    throw new HTTPException(401, {
+      message: "Missing or malformed Authorization header (expected Bearer <64-char hex sig>).",
+    });
+  }
+  const incomingSig = m[1].toLowerCase();
+
+  const timestamp = c.req.header("timestamp");
+  if (!timestamp) {
+    throw new HTTPException(401, { message: "Missing `timestamp` header." });
+  }
+
+  // ── 2. Timestamp freshness ─────────────────────────────────────
+  const tsMs = Date.parse(timestamp);
+  if (Number.isNaN(tsMs)) {
+    throw new HTTPException(401, {
+      message: "`timestamp` is not valid ISO-8601.",
+    });
+  }
+  const ageSeconds = Math.abs((Date.now() - tsMs) / 1000);
+  if (ageSeconds > TIMESTAMP_WINDOW_SECONDS) {
+    throw new HTTPException(401, {
+      message: `\`timestamp\` is outside the ±${TIMESTAMP_WINDOW_SECONDS}s window (off by ${Math.round(ageSeconds)}s). Check your system clock.`,
+    });
+  }
+
+  // ── 3. Read raw body bytes for hashing ────────────────────────
+  // c.req.text() consumes the stream; we re-parse JSON from the
+  // string later. This guarantees the bytes we hash are the same
+  // bytes the client signed.
+  const rawBody = await c.req.text();
+  if (!rawBody) {
+    throw new HTTPException(400, { message: "Body is empty." });
+  }
+
+  // ── 4. Recompute sig + constant-time compare ──────────────────
+  let secret: string;
+  try {
+    secret = getHmacSecret();
+  } catch (e) {
+    throw new HTTPException(500, {
+      message: e instanceof Error ? e.message : "HMAC config invalid",
+    });
+  }
+  const bodyHash = sha256Hex(rawBody);
+  const expectedSig = hmacHex(secret, `${timestamp}:${bodyHash}`);
+  if (!safeEqualHex(expectedSig, incomingSig)) {
+    throw new HTTPException(401, {
+      message: "Invalid signature (body or timestamp tampered, or wrong secret).",
+    });
+  }
+
+  // ── 5. Parse JSON + validate fields ───────────────────────────
+  let body: OfferLetterParams;
+  try {
+    body = JSON.parse(rawBody);
+  } catch {
+    return c.json({ error: "Body is not valid JSON." }, 400);
+  }
+
+  const required: (keyof OfferLetterParams)[] = [
+    "from", "to", "subject", "body",
+    "candidateName", "positionTitle", "employerLegalName",
+    "brand", "acceptUrl",
+  ];
+  for (const field of required) {
+    if (body[field] == null || body[field] === "") {
+      return c.json({ error: `Missing required field: ${field}` }, 400);
     }
-    const bearerToken = m[1];
+  }
+  if (!body.from?.name || !body.from?.email) {
+    return c.json({ error: "`from.name` + `from.email` are required." }, 400);
+  }
+  if (!["codeWithAli", "simplicityFunds"].includes(body.brand)) {
+    return c.json(
+      { error: "`brand` must be 'codeWithAli' or 'simplicityFunds'." },
+      400,
+    );
+  }
 
-    const timestamp = value["timestamp"] as string | undefined;
-    if (!timestamp || Array.isArray(timestamp)) {
-      throw new HTTPException(401, { message: "Missing `timestamp` header." });
-    }
+  // ── 6. Build Resend payload ───────────────────────────────────
+  const recipients = body.to
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (recipients.length === 0) {
+    return c.json({ error: "`to` must contain at least one address." }, 400);
+  }
 
-    // Defensive freshness check — belt-and-suspenders over the
-    // Redis TTL.
-    const tsMs = Date.parse(timestamp);
-    if (Number.isNaN(tsMs)) {
-      throw new HTTPException(401, {
-        message: "`timestamp` is not valid ISO-8601.",
-      });
-    }
-    const ageSeconds = (Date.now() - tsMs) / 1000;
-    if (ageSeconds < -60 || ageSeconds > MAX_TOKEN_AGE_SECONDS) {
-      throw new HTTPException(401, {
-        message: "`timestamp` is out of the allowed window.",
-      });
-    }
+  const attachments = body.attachment
+    ? [
+        {
+          filename: body.attachment.filename,
+          content: Buffer.from(body.attachment.contentBase64, "base64"),
+          contentType: body.attachment.contentType,
+        },
+      ]
+    : undefined;
 
-    // Look up + validate.
-    let stored: string | null;
-    try {
-      stored = await getRedis().get<string>(`bearer:${timestamp}`);
-    } catch (e) {
-      throw new HTTPException(500, {
-        message: `Redis unreachable: ${e instanceof Error ? e.message : "unknown"}`,
-      });
-    }
+  // ── 7. Send via Resend ────────────────────────────────────────
+  try {
+    const resend = getResend();
+    const { data, error } = await resend.emails.send({
+      from: `${body.from.name} <${body.from.email}>`,
+      to: recipients,
+      subject: body.subject,
+      react: OfferLetter({
+        candidateName: body.candidateName,
+        positionTitle: body.positionTitle,
+        employerLegalName: body.employerLegalName,
+        brand: body.brand,
+        body: body.body,
+        acceptUrl: body.acceptUrl,
+      }),
+      attachments,
+    });
 
-    if (!stored || !safeEqual(stored, bearerToken)) {
-      throw new HTTPException(401, {
-        message: "Invalid or already-used bearer.",
-      });
-    }
-
-    // Consume — single-use. Fire-and-forget; TTL catches leaks.
-    try { await getRedis().del(`bearer:${timestamp}`); } catch { /* noop */ }
-
-    return { bearerToken, timestamp };
-  }),
-  async (c) => {
-    // ── Parse + validate body ─────────────────────────────────────
-    let body: OfferLetterParams;
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: "Body is not valid JSON." }, 400);
-    }
-
-    const required: (keyof OfferLetterParams)[] = [
-      "from", "to", "subject", "body",
-      "candidateName", "positionTitle", "employerLegalName",
-      "brand", "acceptUrl",
-    ];
-    for (const field of required) {
-      if (body[field] == null || body[field] === "") {
-        return c.json({ error: `Missing required field: ${field}` }, 400);
-      }
-    }
-    if (!body.from?.name || !body.from?.email) {
-      return c.json({ error: "`from.name` + `from.email` are required." }, 400);
-    }
-    if (!["codeWithAli", "simplicityFunds"].includes(body.brand)) {
-      return c.json(
-        { error: "`brand` must be 'codeWithAli' or 'simplicityFunds'." },
-        400,
-      );
-    }
-
-    // ── Assemble Resend payload ───────────────────────────────────
-    const recipients = body.to
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (recipients.length === 0) {
-      return c.json({ error: "`to` must contain at least one address." }, 400);
-    }
-
-    // Decode attachment base64 → Buffer. Single decode, no double-
-    // encoding. Resend accepts Buffer directly.
-    const attachments = body.attachment
-      ? [
-          {
-            filename: body.attachment.filename,
-            content: Buffer.from(body.attachment.contentBase64, "base64"),
-            contentType: body.attachment.contentType,
-          },
-        ]
-      : undefined;
-
-    // ── Send via Resend ───────────────────────────────────────────
-    try {
-      const resend = getResend();
-      const { data, error } = await resend.emails.send({
-        from: `${body.from.name} <${body.from.email}>`,
-        to: recipients,
-        subject: body.subject,
-        react: OfferLetter({
-          candidateName: body.candidateName,
-          positionTitle: body.positionTitle,
-          employerLegalName: body.employerLegalName,
-          brand: body.brand,
-          body: body.body,
-          acceptUrl: body.acceptUrl,
-        }),
-        attachments,
-      });
-
-      if (error) {
-        return c.json(
-          {
-            error: "Resend rejected the request.",
-            providerCode: error.message,
-          },
-          502,
-        );
-      }
-      if (!data?.id) {
-        return c.json({ error: "Resend returned no message id." }, 502);
-      }
-
-      return c.json({ status: "sent", messageId: data.id });
-    } catch (e) {
+    if (error) {
       return c.json(
         {
-          error: "Resend send failed.",
-          providerCode: e instanceof Error ? e.message : String(e),
+          error: "Resend rejected the request.",
+          providerCode: error.message,
         },
         502,
       );
     }
-  },
-);
+    if (!data?.id) {
+      return c.json({ error: "Resend returned no message id." }, 502);
+    }
 
-// Next.js App Router handler bindings.
+    return c.json({ status: "sent", messageId: data.id });
+  } catch (e) {
+    return c.json(
+      {
+        error: "Resend send failed.",
+        providerCode: e instanceof Error ? e.message : String(e),
+      },
+      502,
+    );
+  }
+});
+
 export const POST = handle(app);
 export const OPTIONS = handle(app);
