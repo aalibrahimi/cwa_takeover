@@ -95,12 +95,14 @@ const BRAND = {
   },
 } as const;
 
-const DOC_META: Record<DocType, {
+interface DocMeta {
   title: string;
   short: string;
   Icon: typeof FileText;
   blurb: string;
-}> = {
+}
+
+const DOC_META_MAP: Partial<Record<string, DocMeta>> = {
   ica: {
     title: "Independent Contractor Agreement",
     short: "ICA",
@@ -132,6 +134,25 @@ const DOC_META: Record<DocType, {
     blurb: "Tax classification as a US independent contractor. You'll receive a 1099-NEC at year end.",
   },
 };
+
+/** Defensive meta lookup — falls back to a generic doc label when
+ *  the doc_type isn't one of the known keys (schema drift, new
+ *  types added in Takeover we don't know about yet). */
+function docMetaFor(docType: string | undefined | null): DocMeta {
+  const key = (docType ?? "").toLowerCase().trim();
+  const hit = DOC_META_MAP[key];
+  if (hit) return hit;
+  const pretty = key
+    .replace(/[-_]/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+    || "Document";
+  return {
+    title: pretty,
+    short: pretty.slice(0, 20),
+    Icon: FileText,
+    blurb: "Please review and sign.",
+  };
+}
 
 // ── Page component ────────────────────────────────────────────
 
@@ -517,7 +538,7 @@ function Stepper({
           ? "Offer"
           : s.kind === "done"
             ? "Welcome"
-            : DOC_META[s.doc.doc_type].short;
+            : docMetaFor(s.doc.doc_type).short;
         return (
           <div key={i} className="flex items-center gap-2">
             <div
@@ -628,7 +649,7 @@ function DocStep({
   error: string | null;
   onSign: () => void;
 }) {
-  const meta = DOC_META[doc.doc_type];
+  const meta = docMetaFor(doc.doc_type);
   const body = doc.body || "";
   const paragraphs = body.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
 
@@ -706,8 +727,7 @@ function DoneStep({
               Offer letter
             </li>
             {signedDocs.map((d) => {
-              const meta = DOC_META[d.doc_type];
-              const Icon = meta.Icon;
+              const meta = docMetaFor(d.doc_type);
               return (
                 <li key={d.id} className="flex items-center gap-2 text-[12.5px]">
                   <CheckCircle2 className="h-3.5 w-3.5 shrink-0" style={{ color: brand.accentLight }} />
