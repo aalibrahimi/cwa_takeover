@@ -84,8 +84,15 @@ function getHmacSecret(): string {
 }
 
 function getResend(): Resend {
-  const key = process.env.RESEND_API_KEY;
-  if (!key) throw new Error("RESEND_API_KEY required in env.");
+  // Accept either naming convention — the backender's original env
+  // used RESEND_EMAIL_KEY, my code uses RESEND_API_KEY. Either works
+  // so we don't have to force a rename in Vercel.
+  const key = process.env.RESEND_API_KEY ?? process.env.RESEND_EMAIL_KEY;
+  if (!key) {
+    throw new Error(
+      "RESEND_API_KEY (or RESEND_EMAIL_KEY) required in env.",
+    );
+  }
   return new Resend(key);
 }
 
