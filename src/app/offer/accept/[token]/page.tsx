@@ -79,16 +79,42 @@ export default function AcceptOfferPage() {
     let cancelled = false;
     (async () => {
       try {
-        const { data, error } = await getSupabase()
+        // Two-pass: try with `brand` first, fall back without it if
+        // the column doesn't exist (400 PGRST error). Defensive
+        // against schema drift between different Supabase projects.
+        let data: any[] | null = null;
+        let fetchError: any = null;
+
+        const withBrand = await getSupabase()
           .from("offer_letters")
           .select(
             "id, candidate_name, position_title, employer_legal_name, employer_signer_name, employer_signer_title, generated_body, status, offer_expires_at, start_date, brand",
           )
           .eq("acceptance_token", token)
           .limit(1);
+
+        if (withBrand.error) {
+          // Retry without `brand` — covers the "column does not exist" case.
+          const fallback = await getSupabase()
+            .from("offer_letters")
+            .select(
+              "id, candidate_name, position_title, employer_legal_name, employer_signer_name, employer_signer_title, generated_body, status, offer_expires_at, start_date",
+            )
+            .eq("acceptance_token", token)
+            .limit(1);
+          data = fallback.data;
+          fetchError = fallback.error;
+        } else {
+          data = withBrand.data;
+        }
+
         if (cancelled) return;
-        if (error || !data || data.length === 0) {
+        if (fetchError || !data || data.length === 0) {
           setNotFound(true);
+          if (fetchError) {
+            // Surface the actual DB error so we can debug RLS issues.
+            setError(fetchError.message ?? String(fetchError));
+          }
         } else {
           setOffer(data[0] as OfferRow);
         }
@@ -185,6 +211,11 @@ export default function AcceptOfferPage() {
             The link may have expired, or the offer was withdrawn. Reach
             out to the sender if you believe this is a mistake.
           </p>
+          {error && (
+            <p className="mt-4 text-[11px] text-zinc-600 font-mono">
+              (debug: {error})
+            </p>
+          )}
         </div>
       </Shell>
     );
