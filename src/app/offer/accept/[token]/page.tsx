@@ -32,7 +32,7 @@ import { useParams } from "next/navigation";
 import { motion, AnimatePresence } from "motion/react";
 import {
   AlertTriangle, CheckCircle2, Loader2, XCircle, FileText,
-  Shield, Lock, FileCheck2, Receipt, ChevronRight,
+  Shield, Lock, FileCheck2, Receipt, ChevronRight, Download, Printer,
 } from "lucide-react";
 import { getSupabase } from "@/lib/supabase";
 
@@ -421,32 +421,38 @@ export default function AcceptOfferPage() {
 
   return (
     <Shell brand={brand}>
+      <PrintStyles />
       <div className="mx-auto w-full max-w-[1100px] px-4 py-10">
-        {/* Top banner — employer + candidate */}
+        {/* Top banner — employer + candidate + save-pdf action */}
         <motion.header
           initial={{ opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.25 }}
-          className="mb-8"
+          className="mb-8 flex items-start justify-between gap-4"
         >
-          <p className="text-[10.5px] font-mono uppercase tracking-widest text-zinc-500 mb-1">
-            Employment offer · for {offer.candidate_name}
-          </p>
-          <h1
-            className="text-[28px] md:text-[32px] font-bold tracking-tight"
-            style={{ color: brand.accentLight }}
-          >
-            {offer.employer_legal_name}
-          </h1>
+          <div>
+            <p className="text-[10.5px] font-mono uppercase tracking-widest text-zinc-500 mb-1">
+              Employment offer · for {offer.candidate_name}
+            </p>
+            <h1
+              className="text-[28px] md:text-[32px] font-bold tracking-tight"
+              style={{ color: brand.accentLight }}
+            >
+              {offer.employer_legal_name}
+            </h1>
+          </div>
+          <SavePdfButton brand={brand} />
         </motion.header>
 
-        {/* Progress stepper */}
-        <Stepper
-          steps={steps}
-          currentIdx={currentStepIdx}
-          brand={brand}
-          offerAccepted={offerAccepted}
-        />
+        {/* Progress stepper — hidden when printing to PDF */}
+        <div data-no-print>
+          <Stepper
+            steps={steps}
+            currentIdx={currentStepIdx}
+            brand={brand}
+            offerAccepted={offerAccepted}
+          />
+        </div>
 
         {/* Active step content — animated transitions */}
         <AnimatePresence mode="wait">
@@ -593,6 +599,9 @@ function OfferStep({
 }) {
   const body = offer.generated_body || "";
   const paragraphs = body.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
+  const signed = offer.status === "accepted";
+  const signedName = (offer as any).candidate_signature_name as string | undefined;
+  const signedAt = (offer as any).candidate_signature_at as string | undefined;
 
   return (
     <TwoColumn
@@ -609,6 +618,10 @@ function OfferStep({
             name: offer.employer_signer_name ?? offer.employer_legal_name,
             title: offer.employer_signer_title,
           }}
+          signature={signed ? {
+            name: signedName ?? offer.candidate_name,
+            at: signedAt ?? null,
+          } : null}
         />
       }
       right={
@@ -664,6 +677,10 @@ function DocStep({
             "This document is still being prepared. If you're reading this, something's off — please reach out to the sender.",
           ]}
           titleIcon={meta.Icon}
+          signature={doc.status === "signed" ? {
+            name: doc.signed_name ?? offer.candidate_name,
+            at: doc.signed_at,
+          } : null}
         />
       }
       right={
@@ -780,8 +797,8 @@ function TwoColumn({
         </div>
       </article>
 
-      {/* Right: sticky signature panel */}
-      <aside className="lg:sticky lg:top-6">
+      {/* Right: sticky signature panel — hidden when printing to PDF */}
+      <aside className="lg:sticky lg:top-6" data-no-print>
         {right}
       </aside>
     </div>
@@ -791,13 +808,17 @@ function TwoColumn({
 // ── Shared: Document body renderer ───────────────────────────
 
 function DocumentBody({
-  title, subtitle, paragraphs, signoff, titleIcon: TitleIcon,
+  title, subtitle, paragraphs, signoff, titleIcon: TitleIcon, signature,
 }: {
   title: string;
   subtitle?: string | null;
   paragraphs: string[];
   signoff?: { name: string; title: string | null };
   titleIcon?: typeof FileText;
+  /** If provided, renders a signed-by block. Appears in the PDF
+   *  print too — that's the whole point, the candidate's copy
+   *  should show their typed signature + timestamp. */
+  signature?: { name: string; at: string | null } | null;
 }) {
   return (
     <div className="prose-invert max-w-none">
@@ -842,6 +863,22 @@ function DocumentBody({
               </>
             )}
           </p>
+        </div>
+      )}
+
+      {signature && (
+        <div className="mt-6 rounded-md border border-dashed border-zinc-700 bg-zinc-950/40 p-4">
+          <p className="text-[10px] font-mono uppercase tracking-widest text-zinc-500 mb-2">
+            Electronically signed
+          </p>
+          <p className="text-[13px] text-zinc-200" style={{ fontFamily: "ui-serif, Georgia, 'Times New Roman', serif", fontStyle: "italic" }}>
+            /s/ {signature.name}
+          </p>
+          {signature.at && (
+            <p className="mt-1 text-[11px] text-zinc-500">
+              {new Date(signature.at).toLocaleString()}
+            </p>
+          )}
         </div>
       )}
     </div>
@@ -939,5 +976,112 @@ function SignPanel({
         This link is unique to you — please don't forward it. Your signature is legally binding under the ESIGN Act.
       </p>
     </div>
+  );
+}
+
+// ── Save-as-PDF button ──────────────────────────────────────────
+// The PDF of the offer itself is attached to the email the
+// candidate received. But once they're on this page they often
+// want a copy of what they actually signed (typed signature,
+// timestamps, related docs if any). We hand that off to the
+// browser's built-in "Save as PDF" via window.print(). The
+// PrintStyles component below rewrites the layout for print so
+// the PDF is clean — just the document content, no chrome, no
+// signature panel UI.
+
+function SavePdfButton({
+  brand,
+}: {
+  brand: (typeof BRAND)[keyof typeof BRAND];
+}) {
+  const handleClick = () => {
+    // Small defer so Safari doesn't lock up on a synchronous print.
+    setTimeout(() => {
+      try {
+        window.print();
+      } catch {
+        /* no-op — most browsers support this; we don't surface a modal */
+      }
+    }, 50);
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      data-no-print
+      className="inline-flex shrink-0 items-center gap-2 rounded-md border border-zinc-700 bg-zinc-900/70 px-3 py-2 text-[11.5px] font-medium text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors shadow-sm"
+      style={{ boxShadow: `0 0 0 1px ${brand.accentDim}` }}
+      title="Save a copy of this page as a PDF"
+    >
+      <Download className="h-3.5 w-3.5" />
+      <span className="hidden sm:inline">Save a copy (PDF)</span>
+      <span className="sm:hidden">
+        <Printer className="h-3.5 w-3.5" />
+      </span>
+    </button>
+  );
+}
+
+// ── Print stylesheet ───────────────────────────────────────────
+// Injected inline so we don't have to touch the global CSS chain
+// (this route is the only one that needs print styles right now).
+// Strategy:
+//   · Hide everything marked data-no-print (buttons, signature
+//     panel, stepper).
+//   · Drop the zinc-950 dark theme to a white page.
+//   · Expand the document article so it flows full width.
+//   · Keep signatures / typed names visible (they're in the main
+//     content area, which we do print).
+
+function PrintStyles() {
+  return (
+    <style jsx global>{`
+      @media print {
+        @page {
+          margin: 0.75in;
+        }
+        html, body {
+          background: #ffffff !important;
+          color: #111111 !important;
+          -webkit-print-color-adjust: exact;
+          print-color-adjust: exact;
+        }
+        /* Remove ambient glow / gradient backgrounds. */
+        main > div[aria-hidden], main > div.pointer-events-none {
+          display: none !important;
+        }
+        /* Hide interactive chrome. */
+        [data-no-print],
+        aside[class*="sticky"],
+        nav {
+          display: none !important;
+        }
+        /* Flatten the two-column grid to single column. */
+        .grid.lg\\:grid-cols-\\[1fr_380px\\] {
+          display: block !important;
+        }
+        article {
+          border: none !important;
+          background: #ffffff !important;
+          box-shadow: none !important;
+          border-radius: 0 !important;
+        }
+        article > div[style*="background"] {
+          display: none !important;
+        }
+        /* Text is light on dark in-app — force readable print colors. */
+        h1, h2, h3, h4, p, li, span, b, strong, em {
+          color: #111111 !important;
+        }
+        .text-zinc-100, .text-zinc-200, .text-zinc-300, .text-zinc-400,
+        .text-zinc-500, .text-zinc-600 {
+          color: #333333 !important;
+        }
+        /* Preserve page-break-friendly prose. */
+        p { orphans: 3; widows: 3; page-break-inside: avoid; }
+        h2, h3 { page-break-after: avoid; }
+      }
+    `}</style>
   );
 }

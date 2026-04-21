@@ -16,7 +16,7 @@
  */
 
 import {
-  Html, Head, Body, Container, Section, Text, Button, Hr, Preview,
+  Html, Head, Body, Container, Section, Text, Button, Hr, Preview, Link,
 } from "react-email";
 import * as React from "react";
 
@@ -101,8 +101,8 @@ export default function OfferLetter({
             ))}
 
             <Text style={styles.paragraph}>
-              The full offer letter is attached as a PDF. When you're ready,
-              review and respond using the secure link below:
+              The full offer letter is attached as a PDF. When you're ready to
+              review and respond, use your personal link below.
             </Text>
 
             <Section style={styles.buttonRow}>
@@ -113,6 +113,19 @@ export default function OfferLetter({
                 Review &amp; Respond
               </Button>
             </Section>
+
+            {/* Plain URL fallback — some email clients (notably Gmail with a
+                PDF attachment preview) collapse inline buttons or strip the
+                styled anchor. A visible URL guarantees the recipient can
+                always reach the page. */}
+            <Text style={styles.fallbackLabel}>
+              Or copy &amp; paste this link into your browser:
+            </Text>
+            <Text style={styles.fallbackUrl}>
+              <Link href={acceptUrl} style={{ ...styles.fallbackLink, color: config.primary }}>
+                {acceptUrl}
+              </Link>
+            </Text>
 
             <Text style={styles.fineprint}>
               This link is unique to you — please don't forward it.
@@ -183,16 +196,36 @@ const styles = {
     color: "#171717",
   },
   buttonRow: {
-    margin: "18px 0",
+    margin: "22px 0 10px 0",
+    textAlign: "center" as const,
   },
   button: {
     display: "inline-block",
-    padding: "10px 20px",
+    padding: "14px 28px",
     color: "#ffffff",
-    fontSize: "14px",
-    fontWeight: 600,
+    fontSize: "15px",
+    fontWeight: 700,
     textDecoration: "none",
-    borderRadius: "8px",
+    borderRadius: "10px",
+    letterSpacing: "0.01em",
+  },
+  fallbackLabel: {
+    fontSize: "12px",
+    color: "#737373",
+    margin: "12px 0 4px 0",
+  },
+  fallbackUrl: {
+    fontSize: "12px",
+    lineHeight: 1.4,
+    wordBreak: "break-all" as const,
+    margin: "0 0 16px 0",
+    padding: "8px 10px",
+    background: "#f4f4f5",
+    borderRadius: "6px",
+  },
+  fallbackLink: {
+    textDecoration: "underline",
+    wordBreak: "break-all" as const,
   },
   fineprint: {
     fontSize: "12px",

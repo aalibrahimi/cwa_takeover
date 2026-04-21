@@ -43,6 +43,7 @@ import { logger } from "hono/logger";
 import { HTTPException } from "hono/http-exception";
 import { Resend } from "resend";
 import { createHmac, createHash } from "node:crypto";
+import { render } from "@react-email/render";
 import OfferLetter, { type Brand } from "../../../../../emails/offer-letter";
 import { DEV_CORS_ORIGINS, PROD_CORS_ORIGINS } from "../corsConfig";
 
@@ -239,13 +240,40 @@ app.post("/offer-letter", async (c) => {
     : undefined;
 
   // ── 7. Send via Resend ────────────────────────────────────────
+  // Build a plain-text body too. Resend will use this for clients that
+  // can't render HTML (and Gmail falls back to it when it collapses a
+  // button next to a PDF attachment — which is why the link wasn't
+  // showing up for some recipients). Having both HTML + text is
+  // also better for deliverability.
+  const plainText = [
+    `Hi ${body.candidateName},`,
+    "",
+    `We're excited to offer you the ${body.positionTitle} role at ${body.employerLegalName}.`,
+    "",
+    body.body?.trim() || "",
+    "",
+    "The full offer letter is attached as a PDF.",
+    "When you're ready to review and respond, open your personal link:",
+    "",
+    body.acceptUrl,
+    "",
+    "This link is unique to you — please don't forward it.",
+    "",
+    "Any questions, just reply to this email.",
+    "",
+    "Welcome aboard,",
+    body.employerLegalName,
+  ].join("\n");
+
+  // Pre-render the React Email component to HTML ourselves. Passing
+  // `react:` straight to Resend has been silently producing an empty
+  // body for some recipients (Gmail was showing only the PDF card).
+  // Rendering up-front gives us a deterministic string we can log,
+  // diff, and pass as `html:` — no mystery render step inside Resend.
+  let renderedHtml = "";
   try {
-    const resend = getResend();
-    const { data, error } = await resend.emails.send({
-      from: `${body.from.name} <${body.from.email}>`,
-      to: recipients,
-      subject: body.subject,
-      react: OfferLetter({
+    renderedHtml = await render(
+      OfferLetter({
         candidateName: body.candidateName,
         positionTitle: body.positionTitle,
         employerLegalName: body.employerLegalName,
@@ -253,6 +281,24 @@ app.post("/offer-letter", async (c) => {
         body: body.body,
         acceptUrl: body.acceptUrl,
       }),
+    );
+  } catch (e) {
+    // If rendering fails for any reason, we still have the plain-text
+    // body as a fallback — Resend will deliver the email text-only.
+    renderedHtml = "";
+    console.error("[offer-letter] react-email render failed:", e);
+  }
+
+  try {
+    const resend = getResend();
+    const { data, error } = await resend.emails.send({
+      from: `${body.from.name} <${body.from.email}>`,
+      to: recipients,
+      subject: body.subject,
+      // Explicit html + text — no more `react:` field. This eliminates
+      // the silent-failure path where Resend rendered to empty.
+      html: renderedHtml || undefined,
+      text: plainText,
       attachments,
     });
 
