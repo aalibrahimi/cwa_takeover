@@ -53,6 +53,10 @@ interface OfferRow {
   offer_expires_at: string | null;
   start_date: string | null;
   brand?: Brand;
+  candidate_signature_name?: string | null;
+  candidate_signature_at?: string | null;
+  accepted_at?: string | null;
+  declined_at?: string | null;
 }
 
 interface HireDoc {
@@ -181,20 +185,21 @@ export default function AcceptOfferPage() {
         const sb = getSupabase();
 
         // Offer — two-pass with brand fallback.
+        // Signature fields (candidate_signature_name, _at, accepted_at,
+        // declined_at) are fetched so the print bundle and signed
+        // badge can render a real audit trail.
+        const baseCols =
+          "id, candidate_name, position_title, employer_legal_name, employer_signer_name, employer_signer_title, generated_body, status, offer_expires_at, start_date, candidate_signature_name, candidate_signature_at, accepted_at, declined_at";
         let offerData: any = null;
         const withBrand = await sb
           .from("offer_letters")
-          .select(
-            "id, candidate_name, position_title, employer_legal_name, employer_signer_name, employer_signer_title, generated_body, status, offer_expires_at, start_date, brand",
-          )
+          .select(`${baseCols}, brand`)
           .eq("acceptance_token", token)
           .limit(1);
         if (withBrand.error) {
           const fallback = await sb
             .from("offer_letters")
-            .select(
-              "id, candidate_name, position_title, employer_legal_name, employer_signer_name, employer_signer_title, generated_body, status, offer_expires_at, start_date",
-            )
+            .select(baseCols)
             .eq("acceptance_token", token)
             .limit(1);
           offerData = fallback.data?.[0];
@@ -262,30 +267,42 @@ export default function AcceptOfferPage() {
     : false;
   const offerDeclined = offerStatus === "declined" || offerStatus === "withdrawn";
 
-  // Active docs = not yet signed + not waived.
-  const pendingDocs = useMemo(
-    () => docs.filter((d) => d.status !== "signed" && d.status !== "waived"),
+  // All docs (including signed) in sign_order. We show every doc as
+  // a step so the candidate sees their full progress — signed docs
+  // appear with a checkmark, pending ones highlight the current step.
+  // Waived docs are hidden entirely since there's nothing to do.
+  const orderedDocs = useMemo(
+    () =>
+      docs
+        .filter((d) => d.status !== "waived")
+        .slice()
+        .sort((a, b) => (a.sign_order ?? 0) - (b.sign_order ?? 0)),
     [docs],
   );
 
-  // The "steps": offer + each pending doc. Offer always first.
+  // The "steps": offer + every doc (signed or not) + welcome. Offer
+  // always first, done always last.
   const steps = useMemo(() => {
     const arr: Array<
       | { kind: "offer" }
       | { kind: "doc"; doc: HireDoc }
       | { kind: "done" }
     > = [{ kind: "offer" }];
-    for (const d of pendingDocs) arr.push({ kind: "doc", doc: d });
+    for (const d of orderedDocs) arr.push({ kind: "doc", doc: d });
     arr.push({ kind: "done" });
     return arr;
-  }, [pendingDocs]);
+  }, [orderedDocs]);
 
   // Compute current step from DB state so refresh preserves progress.
+  // Walk in order: offer first, then the first unsigned doc, else done.
   const currentStepIdx = useMemo(() => {
     if (!offerAccepted) return 0;
-    if (pendingDocs.length === 0) return steps.length - 1;  // done
-    return 1;  // first pending doc
-  }, [offerAccepted, pendingDocs.length, steps.length]);
+    for (let i = 1; i < steps.length - 1; i++) {
+      const s = steps[i];
+      if (s.kind === "doc" && s.doc.status !== "signed") return i;
+    }
+    return steps.length - 1; // all signed → done
+  }, [offerAccepted, steps]);
 
   const current = steps[currentStepIdx];
 
@@ -422,7 +439,8 @@ export default function AcceptOfferPage() {
   return (
     <Shell brand={brand}>
       <PrintStyles />
-      <div className="mx-auto w-full max-w-[1100px] px-4 py-10">
+      <PrintBundle offer={offer} docs={docs} brand={brand} />
+      <div data-screen-only className="mx-auto w-full max-w-[1100px] px-4 py-10">
         {/* Top banner — employer + candidate + save-pdf action */}
         <motion.header
           initial={{ opacity: 0, y: -8 }}
@@ -1037,6 +1055,9 @@ function SavePdfButton({
 function PrintStyles() {
   return (
     <style jsx global>{`
+      /* Hide the print bundle on screen; it's only for the PDF. */
+      [data-print-only] { display: none; }
+
       @media print {
         @page {
           margin: 0.75in;
@@ -1051,24 +1072,23 @@ function PrintStyles() {
         main > div[aria-hidden], main > div.pointer-events-none {
           display: none !important;
         }
-        /* Hide interactive chrome. */
+        /* Hide the screen-only UI (stepper, signature panel, header
+           chrome) — the print bundle has its own clean layout. */
+        [data-screen-only],
         [data-no-print],
-        aside[class*="sticky"],
         nav {
           display: none !important;
         }
-        /* Flatten the two-column grid to single column. */
-        .grid.lg\\:grid-cols-\\[1fr_380px\\] {
+        /* Show the print bundle. */
+        [data-print-only] {
           display: block !important;
         }
-        article {
-          border: none !important;
-          background: #ffffff !important;
-          box-shadow: none !important;
-          border-radius: 0 !important;
+        /* Each document starts on its own page. */
+        [data-print-doc] {
+          page-break-before: always;
         }
-        article > div[style*="background"] {
-          display: none !important;
+        [data-print-doc]:first-child {
+          page-break-before: auto;
         }
         /* Text is light on dark in-app — force readable print colors. */
         h1, h2, h3, h4, p, li, span, b, strong, em {
@@ -1083,5 +1103,193 @@ function PrintStyles() {
         h2, h3 { page-break-after: avoid; }
       }
     `}</style>
+  );
+}
+
+// ── Print bundle — hidden on screen, printed to PDF ─────────────
+// When the candidate hits "Save a copy (PDF)", window.print() fires
+// and the print stylesheet above hides the screen UI and exposes
+// this bundle. It renders the offer letter AND every signed hire
+// document in sign_order, each on its own page, with the typed
+// signature + timestamp preserved. This is the proper audit-quality
+// copy — not just a screenshot of whatever step they're on.
+
+function PrintBundle({
+  offer, docs, brand,
+}: {
+  offer: OfferRow;
+  docs: HireDoc[];
+  brand: (typeof BRAND)[keyof typeof BRAND];
+}) {
+  const orderedDocs = docs
+    .filter((d) => d.status !== "waived")
+    .slice()
+    .sort((a, b) => (a.sign_order ?? 0) - (b.sign_order ?? 0));
+
+  const offerParagraphs = (offer.generated_body || "")
+    .split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
+
+  const offerSigned = offer.status === "accepted";
+
+  return (
+    <div data-print-only style={{ background: "#fff", color: "#111" }}>
+      {/* Cover header on first page */}
+      <div style={{ padding: "0 0 16px 0", borderBottom: "2px solid #ddd", marginBottom: "24px" }}>
+        <p style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: "#666", margin: 0 }}>
+          Signed document package · {offer.candidate_name}
+        </p>
+        <h1 style={{ fontSize: 24, fontWeight: 700, margin: "4px 0 0 0", color: brand.accent }}>
+          {offer.employer_legal_name}
+        </h1>
+        <p style={{ fontSize: 11, color: "#666", margin: "4px 0 0 0" }}>
+          Generated {new Date().toLocaleString()}
+        </p>
+      </div>
+
+      {/* Offer letter */}
+      <div data-print-doc style={{ padding: "8px 0" }}>
+        <PrintableDocument
+          title={`Offer: ${offer.position_title}`}
+          subtitle={`at ${offer.employer_legal_name}`}
+          paragraphs={offerParagraphs.length > 0 ? offerParagraphs : [
+            "The full terms of this offer are in the PDF that was attached to the hiring email.",
+          ]}
+          signoff={{
+            name: offer.employer_signer_name ?? offer.employer_legal_name,
+            title: offer.employer_signer_title,
+          }}
+          signature={offerSigned ? {
+            name: offer.candidate_signature_name ?? offer.candidate_name,
+            at: offer.candidate_signature_at ?? offer.accepted_at ?? null,
+          } : null}
+        />
+      </div>
+
+      {/* Each hire document */}
+      {orderedDocs.map((d) => {
+        const meta = docMetaFor(d.doc_type);
+        const paragraphs = (d.body || "")
+          .split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
+        return (
+          <div key={d.id} data-print-doc style={{ padding: "8px 0" }}>
+            <PrintableDocument
+              title={meta.title}
+              subtitle={meta.blurb}
+              paragraphs={paragraphs.length > 0 ? paragraphs : [
+                "(No document body was stored for this agreement.)",
+              ]}
+              signature={d.status === "signed" ? {
+                name: d.signed_name ?? offer.candidate_name,
+                at: d.signed_at,
+              } : null}
+              pendingNote={d.status !== "signed"
+                ? `Status: ${d.status.replace(/_/g, " ")}`
+                : null}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Plain-HTML print-safe document renderer. Doesn't rely on Tailwind
+// classes since the print stylesheet already whitewashes colors —
+// inline styles keep this self-contained and predictable.
+function PrintableDocument({
+  title, subtitle, paragraphs, signoff, signature, pendingNote,
+}: {
+  title: string;
+  subtitle?: string | null;
+  paragraphs: string[];
+  signoff?: { name: string; title: string | null };
+  signature?: { name: string; at: string | null } | null;
+  pendingNote?: string | null;
+}) {
+  return (
+    <article>
+      <h2 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 4px 0", color: "#111" }}>
+        {title}
+      </h2>
+      {subtitle && (
+        <p style={{ fontSize: 11, color: "#666", margin: "0 0 20px 0" }}>
+          {subtitle}
+        </p>
+      )}
+
+      {paragraphs.map((p, i) => {
+        const isHeading = p === p.toUpperCase() && p.length < 80 && /[A-Z]/.test(p);
+        return isHeading ? (
+          <h3
+            key={i}
+            style={{
+              fontSize: 11, fontWeight: 600, textTransform: "uppercase",
+              letterSpacing: "0.08em", color: "#333",
+              margin: "24px 0 8px 0",
+            }}
+          >
+            {p}
+          </h3>
+        ) : (
+          <p key={i} style={{ fontSize: 12, lineHeight: 1.55, color: "#111", margin: "0 0 10px 0" }}>
+            {p}
+          </p>
+        );
+      })}
+
+      {signoff && (
+        <div style={{ marginTop: 28, paddingTop: 16, borderTop: "1px solid #ddd" }}>
+          <p style={{ fontSize: 12, color: "#111", margin: 0 }}>
+            Signed,<br />
+            <strong>{signoff.name}</strong>
+            {signoff.title && (
+              <>
+                <br />
+                <span style={{ fontSize: 11, color: "#555" }}>{signoff.title}</span>
+              </>
+            )}
+          </p>
+        </div>
+      )}
+
+      {signature && (
+        <div
+          style={{
+            marginTop: 24,
+            padding: 14,
+            border: "1px dashed #bbb",
+            background: "#fafafa",
+          }}
+        >
+          <p style={{
+            fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase",
+            color: "#666", margin: "0 0 6px 0",
+          }}>
+            Electronically signed
+          </p>
+          <p style={{
+            fontSize: 14, fontStyle: "italic",
+            fontFamily: "'Georgia', 'Times New Roman', serif",
+            color: "#111", margin: 0,
+          }}>
+            /s/ {signature.name}
+          </p>
+          {signature.at && (
+            <p style={{ fontSize: 11, color: "#666", margin: "4px 0 0 0" }}>
+              {new Date(signature.at).toLocaleString()}
+            </p>
+          )}
+        </div>
+      )}
+
+      {pendingNote && (
+        <p style={{
+          marginTop: 24, fontSize: 11, color: "#a16207",
+          fontStyle: "italic",
+        }}>
+          {pendingNote}
+        </p>
+      )}
+    </article>
   );
 }
