@@ -57,6 +57,9 @@ interface OfferRow {
   candidate_signature_at?: string | null;
   accepted_at?: string | null;
   declined_at?: string | null;
+  /** Employer counter-signature captured in Takeover before send. */
+  employer_signature_name?: string | null;
+  employer_signature_at?: string | null;
 }
 
 interface HireDoc {
@@ -68,6 +71,9 @@ interface HireDoc {
   signed_name: string | null;
   signed_at: string | null;
   sign_order: number;
+  /** Employer counter-signature for this specific companion doc. */
+  employer_signature_name?: string | null;
+  employer_signature_at?: string | null;
 }
 
 // ── Brand + doc-type presentation ─────────────────────────────
@@ -189,7 +195,7 @@ export default function AcceptOfferPage() {
         // declined_at) are fetched so the print bundle and signed
         // badge can render a real audit trail.
         const baseCols =
-          "id, candidate_name, position_title, employer_legal_name, employer_signer_name, employer_signer_title, generated_body, status, offer_expires_at, start_date, candidate_signature_name, candidate_signature_at, accepted_at, declined_at";
+          "id, candidate_name, position_title, employer_legal_name, employer_signer_name, employer_signer_title, generated_body, status, offer_expires_at, start_date, candidate_signature_name, candidate_signature_at, accepted_at, declined_at, employer_signature_name, employer_signature_at";
         let offerData: any = null;
         const withBrand = await sb
           .from("offer_letters")
@@ -222,7 +228,7 @@ export default function AcceptOfferPage() {
         let docsData: any[] = [];
         const withSig = await sb
           .from("hire_documents")
-          .select("id, offer_letter_id, doc_type, body, status, signed_name, signed_at, sign_order")
+          .select("id, offer_letter_id, doc_type, body, status, signed_name, signed_at, sign_order, employer_signature_name, employer_signature_at")
           .eq("offer_letter_id", offerData.id)
           .order("sign_order", { ascending: true });
         if (withSig.error) {
@@ -640,6 +646,10 @@ function OfferStep({
             name: signedName ?? offer.candidate_name,
             at: signedAt ?? null,
           } : null}
+          employerSignature={offer.employer_signature_at ? {
+            name: offer.employer_signature_name ?? offer.employer_signer_name ?? offer.employer_legal_name,
+            at: offer.employer_signature_at,
+          } : null}
         />
       }
       right={
@@ -698,6 +708,13 @@ function DocStep({
           signature={doc.status === "signed" ? {
             name: doc.signed_name ?? offer.candidate_name,
             at: doc.signed_at,
+          } : null}
+          employerSignature={doc.employer_signature_at ? {
+            name: doc.employer_signature_name
+              ?? offer.employer_signature_name
+              ?? offer.employer_signer_name
+              ?? offer.employer_legal_name,
+            at: doc.employer_signature_at,
           } : null}
         />
       }
@@ -827,6 +844,7 @@ function TwoColumn({
 
 function DocumentBody({
   title, subtitle, paragraphs, signoff, titleIcon: TitleIcon, signature,
+  employerSignature,
 }: {
   title: string;
   subtitle?: string | null;
@@ -837,6 +855,11 @@ function DocumentBody({
    *  print too — that's the whole point, the candidate's copy
    *  should show their typed signature + timestamp. */
   signature?: { name: string; at: string | null } | null;
+  /** Employer counter-signature captured before the offer went out.
+   *  Shown to reassure the candidate the document is already
+   *  signed on our side — they're completing a dual-signed agreement
+   *  rather than sending something into a void. */
+  employerSignature?: { name: string; at: string | null } | null;
 }) {
   return (
     <div className="prose-invert max-w-none">
@@ -884,8 +907,24 @@ function DocumentBody({
         </div>
       )}
 
+      {employerSignature && (
+        <div className="mt-6 rounded-md border border-emerald-500/40 bg-emerald-500/5 p-4">
+          <p className="text-[10px] font-mono uppercase tracking-widest text-emerald-400 mb-2">
+            Counter-signed by employer
+          </p>
+          <p className="text-[13px] text-zinc-200" style={{ fontFamily: "ui-serif, Georgia, 'Times New Roman', serif", fontStyle: "italic" }}>
+            /s/ {employerSignature.name}
+          </p>
+          {employerSignature.at && (
+            <p className="mt-1 text-[11px] text-zinc-500">
+              {new Date(employerSignature.at).toLocaleString()}
+            </p>
+          )}
+        </div>
+      )}
+
       {signature && (
-        <div className="mt-6 rounded-md border border-dashed border-zinc-700 bg-zinc-950/40 p-4">
+        <div className="mt-4 rounded-md border border-dashed border-zinc-700 bg-zinc-950/40 p-4">
           <p className="text-[10px] font-mono uppercase tracking-widest text-zinc-500 mb-2">
             Electronically signed
           </p>
@@ -1158,6 +1197,12 @@ function PrintBundle({
             name: offer.employer_signer_name ?? offer.employer_legal_name,
             title: offer.employer_signer_title,
           }}
+          employerSignature={offer.employer_signature_at ? {
+            name: offer.employer_signature_name
+              ?? offer.employer_signer_name
+              ?? offer.employer_legal_name,
+            at: offer.employer_signature_at,
+          } : null}
           signature={offerSigned ? {
             name: offer.candidate_signature_name ?? offer.candidate_name,
             at: offer.candidate_signature_at ?? offer.accepted_at ?? null,
@@ -1178,6 +1223,13 @@ function PrintBundle({
               paragraphs={paragraphs.length > 0 ? paragraphs : [
                 "(No document body was stored for this agreement.)",
               ]}
+              employerSignature={d.employer_signature_at ? {
+                name: d.employer_signature_name
+                  ?? offer.employer_signature_name
+                  ?? offer.employer_signer_name
+                  ?? offer.employer_legal_name,
+                at: d.employer_signature_at,
+              } : null}
               signature={d.status === "signed" ? {
                 name: d.signed_name ?? offer.candidate_name,
                 at: d.signed_at,
@@ -1198,12 +1250,17 @@ function PrintBundle({
 // inline styles keep this self-contained and predictable.
 function PrintableDocument({
   title, subtitle, paragraphs, signoff, signature, pendingNote,
+  employerSignature,
 }: {
   title: string;
   subtitle?: string | null;
   paragraphs: string[];
   signoff?: { name: string; title: string | null };
   signature?: { name: string; at: string | null } | null;
+  /** Employer counter-signature. Rendered ABOVE the candidate
+   *  signature in the PDF so the saved artifact clearly shows
+   *  both parties have signed. */
+  employerSignature?: { name: string; at: string | null } | null;
   pendingNote?: string | null;
 }) {
   return (
@@ -1252,10 +1309,40 @@ function PrintableDocument({
         </div>
       )}
 
-      {signature && (
+      {employerSignature && (
         <div
           style={{
             marginTop: 24,
+            padding: 14,
+            border: "1px solid #047857",
+            background: "#ecfdf5",
+          }}
+        >
+          <p style={{
+            fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase",
+            color: "#047857", margin: "0 0 6px 0", fontWeight: 700,
+          }}>
+            Counter-signed by employer
+          </p>
+          <p style={{
+            fontSize: 14, fontStyle: "italic",
+            fontFamily: "'Georgia', 'Times New Roman', serif",
+            color: "#111", margin: 0,
+          }}>
+            /s/ {employerSignature.name}
+          </p>
+          {employerSignature.at && (
+            <p style={{ fontSize: 11, color: "#555", margin: "4px 0 0 0" }}>
+              {new Date(employerSignature.at).toLocaleString()}
+            </p>
+          )}
+        </div>
+      )}
+
+      {signature && (
+        <div
+          style={{
+            marginTop: employerSignature ? 12 : 24,
             padding: 14,
             border: "1px dashed #bbb",
             background: "#fafafa",
@@ -1265,7 +1352,7 @@ function PrintableDocument({
             fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase",
             color: "#666", margin: "0 0 6px 0",
           }}>
-            Electronically signed
+            Electronically signed by candidate
           </p>
           <p style={{
             fontSize: 14, fontStyle: "italic",

@@ -103,7 +103,23 @@ export async function GET(req: Request): Promise<Response> {
   let resend: Resend;
   let siteUrl: string;
   try {
-    supaUrl = getEnv("SUPABASE_URL");
+    // Accept either SUPABASE_URL or NEXT_PUBLIC_SUPABASE_URL. The
+    // cwa_takeover accept page already sets the NEXT_PUBLIC_ one
+    // for the browser client — reusing it here avoids forcing
+    // operators to duplicate the same value into two env vars.
+    supaUrl =
+      process.env.SUPABASE_URL ??
+      process.env.NEXT_PUBLIC_SUPABASE_URL ??
+      "";
+    if (!supaUrl) {
+      throw new Error(
+        "SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL) is required in env.",
+      );
+    }
+    // SERVICE_ROLE is NOT the anon key — it's a separate key that
+    // bypasses RLS, required because the cron enumerates offers
+    // across candidates and can't present a per-candidate token.
+    // Must NEVER be prefixed NEXT_PUBLIC_ or shipped to the browser.
     supaKey = getEnv("SUPABASE_SERVICE_ROLE");
     resend = new Resend(
       process.env.RESEND_API_KEY ?? process.env.RESEND_EMAIL_KEY ?? "",
