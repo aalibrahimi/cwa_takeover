@@ -14,7 +14,7 @@
  * Every other event is acknowledged and ignored.
  *
  * What it does for a paid session that carries metadata.invoice_id:
- *   1. Checks the currency and that the amount paid is the amount the link was made for.
+ *   1. Checks the currency and that the amount paid is both the amount the link was made for and what the invoice is for now.
  *      A mismatch is written on the client's timeline for a person to look at; the invoice is not marked.
  *   2. Looks up the charge behind the payment (the id the Takeover Money page lists payments by).
  *   3. Sets the invoice to paid, with the date, "stripe" and the charge id, only if it is still pending.
@@ -37,7 +37,7 @@ import { render } from "@react-email/render";
 import PaymentReceivedEmail from "../../../../../emails/payment-received";
 import PaymentNoticeEmail from "../../../../../emails/payment-notice";
 import { getResend } from "../../email/signedRequest";
-import { CURRENCY, INVOICE_COLUMNS, UpstreamError, db, stripe, webhookProblem, type InvoiceRow } from "../shared";
+import { CURRENCY, INVOICE_COLUMNS, UpstreamError, amountCents, db, stripe, webhookProblem, type InvoiceRow } from "../shared";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -180,8 +180,11 @@ app.post("/webhook", async (c) => {
     if (invoice.status === "paid") return c.json({ received: true, already: true });
 
     const paidCents = session.amount_total ?? 0;
-    if ((session.currency ?? "").toLowerCase() !== CURRENCY || invoice.payment_link_amount_cents == null || paidCents !== invoice.payment_link_amount_cents) {
-      await note(invoice, `Stripe payment of ${usd(paidCents)} for invoice #${invoiceId} does not match the amount its link was made for. Check it and mark the invoice by hand.`, { stripe_session: session.id, mismatch: true });
+    // The payment must be for what the invoice is for right now, not only for what its link was made for:
+    // hours can be added to an unpaid invoice after its link went out, and a payment through the old link would then be short.
+    const owedCents = amountCents(invoice);
+    if ((session.currency ?? "").toLowerCase() !== CURRENCY || invoice.payment_link_amount_cents == null || paidCents !== invoice.payment_link_amount_cents || paidCents !== owedCents) {
+      await note(invoice, `Stripe payment of ${usd(paidCents)} received for invoice #${invoiceId}, which is for ${usd(owedCents)}. The invoice was not marked as paid. Check it and settle the difference by hand.`, { stripe_session: session.id, mismatch: true });
       return c.json({ received: true, mismatch: true });
     }
 
