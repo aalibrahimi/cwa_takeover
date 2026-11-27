@@ -27,7 +27,9 @@ Takeover desktop app                 this site (Vercel)                 Stripe  
                                           │ 8. invoice → paid, paid_at, "stripe", charge id ─────────────►│ invoices
                                           │ 9. line on the client's timeline ────────────────────────────►│ client_activity
                                           │ 10. switch the link off ─────────────►│
-11. the desktop app shows the invoice as paid
+                                          │ 11. two emails through Resend: "payment received" to the client,
+                                          │     and a notice to the founders
+12. the desktop app shows the invoice as paid
     the next time it reads the database
 ```
 
@@ -53,6 +55,12 @@ Takeover desktop app                 this site (Vercel)                 Stripe  
 - **The charge id is the reference.** The desktop app's Money page lists
   Stripe payments by charge id (`ch_...`) and uses it to show a paid invoice
   and its Stripe payment as one row, not two.
+- **Emails go out once.** They are sent only after the update that marked
+  the invoice as paid actually changed a row, so a repeated webhook sends
+  nothing. The client's address comes from the invoice. The founders are
+  everyone in the `employee` table at COO rank or above. If an email cannot
+  be sent the payment still stands and the failure is logged; Stripe is not
+  asked to retry, since that would not send the email either.
 - **No new package.** Stripe and Supabase are both called with `fetch`, and
   the webhook signature is checked with Node's own `crypto`.
 
@@ -65,6 +73,8 @@ Takeover desktop app                 this site (Vercel)                 Stripe  
 | `src/app/api/stripe/webhook/route.ts` | `POST /api/stripe/webhook` |
 | `src/app/api/email/invoice/route.ts` | now accepts an optional `payUrl` (Stripe addresses only) |
 | `emails/invoice.tsx` | shows a "Pay online" button when `payUrl` is given |
+| `emails/payment-received.tsx` | the confirmation the client gets when the invoice is paid |
+| `emails/payment-notice.tsx` | the notice the founders get |
 
 ## Setting it up (once)
 
@@ -79,6 +89,7 @@ Takeover desktop app                 this site (Vercel)                 Stripe  
      offer-reminder cron. They must point at the project that has the
      `invoices` table.
    - `EMAIL_HMAC_SECRET`: already set for the email routes.
+   - `RESEND_API_KEY`: already set for the email routes. The payment emails use it too.
 3. **Deploy** (push to `main`).
 4. **Stripe, Developers, Webhooks, Add endpoint.**
    - URL: `https://<this site>/api/stripe/webhook`
@@ -93,12 +104,13 @@ Takeover desktop app                 this site (Vercel)                 Stripe  
 
 ## Checked before shipping
 
-26 cases were run against the two routes with Stripe and Supabase replaced
+32 cases were run against the two routes with Stripe and Supabase replaced
 by stand-ins: wrong and missing signatures, a stale webhook, an unknown
 invoice, a paid invoice, an amount under 50 cents, a reused link, a changed
 amount, a missing migration, an unrelated event, a payment that is not paid
 yet, the paid path, a repeated event, a wrong amount, a wrong currency, a
-lost race, and the database being down. Nothing has been run against real
+lost race, the database being down, both emails going out once, a repeat
+sending none, mail being refused, and a bad client address. Nothing has been run against real
 Stripe yet: that is step 5 above.
 
 ## Not done here
