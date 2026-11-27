@@ -55,6 +55,8 @@ interface StripeEvent {
   id: string;
   type: string;
   created: number;
+  /** False for an event from Stripe's sandbox. */
+  livemode?: boolean;
   data: { object: CheckoutSession };
 }
 
@@ -92,9 +94,10 @@ const isEmail = (v: unknown): v is string => typeof v === "string" && /^[^\s@,;<
  * @param paidCents The amount paid, in cents.
  * @param paidAt When it was paid.
  * @param reference Stripe's id for the charge.
+ * @param live False for a sandbox payment; the founders' notice says so.
  * @returns Which emails went out, for the response and the logs.
  */
-async function sendPaymentEmails(invoice: InvoiceRow, paidCents: number, paidAt: Date, reference: string): Promise<{ client: boolean; founders: number }> {
+async function sendPaymentEmails(invoice: InvoiceRow, paidCents: number, paidAt: Date, reference: string, live: boolean): Promise<{ client: boolean; founders: number }> {
   const sent = { client: false, founders: 0 };
   const amount = usd(paidCents);
   // The founders are in California; a payment made in the evening should not be dated tomorrow.
@@ -134,11 +137,11 @@ async function sendPaymentEmails(invoice: InvoiceRow, paidCents: number, paidAt:
     const founders = (await db<{ email: string | null }>("GET", `employee?role_rank=gte.${FOUNDER_RANK}&select=email`)).map((r) => r.email).filter(isEmail);
     const to = [...new Set(founders.map((e) => e.toLowerCase()))];
     if (to.length) {
-      const props = { clientName, invoiceId, invoiceTitle, amount, paidOn, reference };
+      const props = { clientName, invoiceId, invoiceTitle, amount, paidOn, reference, live, clientEmail: sent.client ? invoice.client_email ?? undefined : undefined };
       const { error } = await resend.emails.send({
         from: FROM,
         to,
-        subject: `${clientName} paid invoice #${invoiceId}: ${amount}`,
+        subject: `${live ? "" : "[Sandbox] "}${clientName} paid invoice #${invoiceId}: ${amount}`,
         html: await render(PaymentNoticeEmail(props)),
         text: [`${clientName} paid invoice #${invoiceId} through Stripe: ${amount}.`, ...(invoiceTitle ? [`For: ${invoiceTitle}`] : []), `Paid on ${paidOn}. Stripe reference: ${reference}.`, "", "It is marked as paid in Takeover."].join("\n"),
       });
@@ -204,7 +207,7 @@ app.post("/webhook", async (c) => {
     if (session.payment_link) {
       await stripe("POST", `/payment_links/${session.payment_link}`, { active: "false" }).catch((e) => console.error("[stripe webhook] could not switch the link off", session.payment_link, e));
     }
-    const emails = await sendPaymentEmails(invoice, paidCents, new Date(event.created * 1000), reference);
+    const emails = await sendPaymentEmails(invoice, paidCents, new Date(event.created * 1000), reference, event.livemode !== false);
     return c.json({ received: true, invoiceId, paid: true, emails });
   } catch (e) {
     // This payment's charge is already on another invoice (someone marked it by hand): nothing more to do.
