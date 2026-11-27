@@ -14,6 +14,7 @@
  *   · the email is built here, from emails/invoice.tsx. The body carries fields, never HTML.
  *   · the sender is fixed here. It is not taken from the body.
  *   · one recipient.
+ *   · a pay link, if given, must be a Stripe-hosted address. No other link can be put in the email.
  *   · the attachment must be a real PDF, at most MAX_PDF_BYTES.
  *
  * Body:
@@ -24,6 +25,7 @@
  *     "invoiceId": 1042,
  *     "invoiceTitle": "Website hosting",     optional
  *     "amount": "$45.00",                    optional
+ *     "payUrl": "https://buy.stripe.com/...", optional. A Stripe payment link for this invoice, shown as a "Pay online" button.
  *     "attachment": { "contentBase64": "<the PDF>" }
  *   }
  *
@@ -57,6 +59,7 @@ interface InvoiceEmailParams {
   invoiceId: number | string;
   invoiceTitle?: string;
   amount?: string;
+  payUrl?: string;
   attachment: { contentBase64: string };
 }
 
@@ -100,6 +103,11 @@ app.post("/invoice", async (c) => {
   if (invoiceTitle === null) return c.json({ error: "`invoiceTitle` must be one line, up to 200 characters." }, 400);
   const amount = body.amount == null || body.amount === "" ? undefined : line(body.amount, 40);
   if (amount === null) return c.json({ error: "`amount` must be one line, up to 40 characters." }, 400);
+  // Only Stripe's own hosted pages, so the button can never be pointed somewhere else.
+  const payUrl = body.payUrl == null || body.payUrl === "" ? undefined : line(body.payUrl, 300);
+  if (payUrl === null || (payUrl && !/^https:\/\/(buy|checkout|pay|invoice)\.stripe\.com\/[\w\-/#?=&%.]+$/.test(payUrl))) {
+    return c.json({ error: "`payUrl` must be a Stripe payment address (https://buy.stripe.com/...)." }, 400);
+  }
   const subject = body.subject == null || body.subject === "" ? `Invoice #${invoiceId} from CodeWithAli` : line(body.subject, 200);
   if (subject === null) return c.json({ error: "`subject` must be one line, up to 200 characters." }, 400);
 
@@ -120,6 +128,7 @@ app.post("/invoice", async (c) => {
     `Invoice: #${invoiceId}`,
     ...(invoiceTitle ? [`For: ${invoiceTitle}`] : []),
     ...(amount ? [`Amount: ${amount}`] : []),
+    ...(payUrl ? ["", `Pay online: ${payUrl}`] : []),
     "",
     "Questions about this invoice? Reach us at unfold@codewithali.com or +1 (408) 690 4009.",
     "This email is auto-generated. Please do not reply directly.",
@@ -127,7 +136,7 @@ app.post("/invoice", async (c) => {
 
   let html = "";
   try {
-    html = await render(InvoiceEmail({ clientName, invoiceId, invoiceTitle, amount }));
+    html = await render(InvoiceEmail({ clientName, invoiceId, invoiceTitle, amount, payUrl }));
   } catch (e) {
     // The plain-text body still goes out if rendering fails.
     console.error("[invoice] react-email render failed:", e);

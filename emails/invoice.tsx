@@ -21,6 +21,8 @@ export interface InvoiceEmailProps {
   invoiceTitle?: string;
   /** The total as text, already formatted ("$45.00"). Optional. */
   amount?: string;
+  /** A Stripe payment link for this invoice. When given, the email has a "Pay online" button. Checked at the route. */
+  payUrl?: string;
 }
 
 const BRAND = {
@@ -31,7 +33,7 @@ const BRAND = {
   footerNote: "Sent from CodeWithAli · codewithali.com",
 };
 
-export default function InvoiceEmail({ clientName, invoiceId, invoiceTitle, amount }: InvoiceEmailProps) {
+export default function InvoiceEmail({ clientName, invoiceId, invoiceTitle, amount, payUrl }: InvoiceEmailProps) {
   const facts: [string, string][] = [["Invoice", `#${invoiceId}`]];
   if (invoiceTitle) facts.push(["For", invoiceTitle]);
   if (amount) facts.push(["Amount", amount]);
@@ -60,6 +62,15 @@ export default function InvoiceEmail({ clientName, invoiceId, invoiceTitle, amou
                 </Text>
               ))}
             </Section>
+
+            {payUrl && (
+              <Section style={styles.pay}>
+                <Link href={payUrl} style={{ ...styles.payButton, background: BRAND.primary }}>
+                  Pay online{amount ? ` · ${amount}` : ""}
+                </Link>
+                <Text style={styles.payNote}>Secure card payment through Stripe. The PDF is attached for your records.</Text>
+              </Section>
+            )}
 
             <Hr style={styles.rule} />
 
@@ -99,6 +110,9 @@ const styles = {
   facts: { margin: "6px 0 4px 0", padding: "12px 16px", background: "#fafafa", borderLeft: "3px solid #b91c1c" },
   fact: { fontSize: "14px", lineHeight: 1.5, margin: "0 0 4px 0", color: "#171717" },
   factLabel: { display: "inline-block", width: "72px", color: "#737373", fontSize: "12px" },
+  pay: { margin: "18px 0 4px 0" },
+  payButton: { display: "inline-block", padding: "12px 22px", color: "#ffffff", fontSize: "15px", fontWeight: 600, textDecoration: "none", borderRadius: "6px" },
+  payNote: { fontSize: "12px", lineHeight: 1.5, margin: "10px 0 0 0", color: "#737373" },
   rule: { border: "none", borderTop: "1px solid #e5e5e5", margin: "20px 0 16px 0" },
   small: { fontSize: "13px", lineHeight: 1.5, margin: "0 0 8px 0", color: "#525252" },
   footer: { padding: "16px 32px 24px 32px", background: "#fafafa" },
